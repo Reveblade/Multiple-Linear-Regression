@@ -3,9 +3,12 @@ Development Log (DEVLOG)
 
 Course: CME 3205 – Operating Systems
 Semester: 2025–2026 Fall
-Student: ........................................
-Student No: .....................................
-Group No (if any): ..............................
+
+Student 1: Mert YILDIZ
+Student No: 202150071
+
+Student 2: Doğukan DAĞLI
+Student No: 2022510193
 
 --------------------------------------------------
 ## 1. PROJECT DESCRIPTION
@@ -41,7 +44,7 @@ The server:
 --------------------------------------------------
 ## 3. GLOBAL CONSTRAINTS (FROM ASSIGNMENT)
 
-The following global limits and constants will be strictly used:
+The following global limits and constants are strictly applied:
 
 - PORT_NUMBER = 60000
 - MAX_SAMPLES = 10000
@@ -53,11 +56,11 @@ The following global limits and constants will be strictly used:
 --------------------------------------------------
 ## 4. DEVELOPMENT PHILOSOPHY
 
-- The project will be developed in clearly separated stages.
-- Each stage will be completed, tested, and documented before moving to the next.
-- No external ML or math libraries will be used.
-- All matrix operations and regression solvers will be implemented manually in C.
-- Concurrency will be visible, controlled, and well-documented.
+- The project is developed in clearly separated stages.
+- Each stage is completed, tested, and documented before moving to the next.
+- No external ML or math libraries are used.
+- All matrix operations and regression solvers are implemented manually in C.
+- Concurrency is visible, controlled, and well-documented.
 
 --------------------------------------------------
 ## 5. INSTRUCTOR-PROVIDED REFERENCE FILES
@@ -68,147 +71,176 @@ The following files were provided by the instructor as references:
 - POSIX thread creation and synchronization examples
 - CSV file parsing examples
 
-These files are used strictly as:
+These resources are used strictly as:
 - Structural reference
 - Syntax reference
 - Design guidance
 
-They are NOT copied directly.
-All implementations in this project are rewritten and integrated into the final architecture.
+All final implementations are rewritten and integrated manually.
 
 --------------------------------------------------
 ## 6. CURRENT PROJECT STATUS
 
-### ✅ RESET PHASE COMPLETED
-- Decision taken to reset the project and restart with a clean architecture.
-- DEVLOG.md file created as the main development tracking document.
-- Development is restarted with a structured, step-by-step plan.
+- RESET PHASE COMPLETED
+- ALL DEVELOPMENT STAGES COMPLETED SUCCESSFULLY
+- SYSTEM FULLY OPERATIONAL
+- MULTI-THREADING VERIFIED
+- REAL-TIME TELNET PREDICTION VERIFIED
 
 --------------------------------------------------
-## 7. DEVELOPMENT ROADMAP
+## 7. DEVELOPMENT ROADMAP & IMPLEMENTATION
 
-### STAGE 1 – Core Socket Server
-- TCP socket server on port 60000
-- Single-client blocking accept
-- Telnet-compatible input/output
-- CSV filename input handling
+### STAGE 1 – Core Socket Server (COMPLETED)
 
-Status: ✅ COMPLETED
+- Implemented a TCP socket server that binds to port 60000 using AF_INET/SOCK_STREAM.
+- SO_REUSEADDR option is enabled to allow quick restart after crashes.
+- The server uses blocking accept() to handle one client connection at a time.
+- For each connection, it sends a welcome message, prompts for a CSV filename,
+  reads one line of input from the client, and logs the filename on the server console.
+- All socket operations are checked; errors are printed with perror().
+- The server runs in an infinite loop and closes each client socket cleanly.
 
-**Technical Summary:**
-Implemented a production-style TCP socket server using POSIX sockets. The server binds to port 60000 with SO_REUSEADDR enabled for address reuse. Uses blocking accept() to handle one client connection at a time. On client connection, sends welcome message, prompts for CSV filename, reads one line of input, logs the filename to server console, sends confirmation message, and closes the connection. Server runs indefinitely, accepting new connections in a loop. All socket operations include proper error handling using perror().
+### STAGE 2 – CSV File Presence Check & Basic Analysis (COMPLETED)
 
----
+- Implemented analyze_csv(const char* filename) which checks dataset existence via fopen.
+- If the file cannot be opened, an error message is prepared for the client and server console.
+- If the file exists, the function:
+  - Reads the header line and counts commas to detect the number of columns.
+  - Counts remaining data lines to determine the number of rows.
+- The function does not depend on the network layer; it only updates:
+  - total_rows
+  - total_columns
+- These values are then reported to the client from the main/server layer.
 
-### STAGE 2 – CSV File Presence Check & Basic Analysis
-- File existence check
-- Column count detection
-- Row count detection
-- Error handling for missing datasets
+### STAGE 3 – Column Type Detection (Schema Builder) (COMPLETED)
 
-Status: ✅ COMPLETED
+- The first data row is used to detect column types.
+- For each column:
+  - If strtod() can parse the value and there is no leftover string, the column is treated as NUMERIC.
+  - Otherwise it is treated as CATEGORICAL.
+- Column names from the header row are stored in column_names[].
+- Target column detection:
+  - Case-insensitive substring scan over header names for the keywords "price", "target" or "label".
+  - If a match is found, target_column_index is set accordingly.
+- This forms a complete schema:
+  - column_names[]
+  - column_types[]
+  - target_column_index
+  - total_rows
+  - total_columns
 
-**Technical Summary:**
-Implemented analyze_csv() function that performs file existence validation using fopen(). If file is not found, sends error message to client and logs to server console. If file exists, reads the CSV file line by line. Column count is determined by counting commas in the first line (header row) plus one. Row count is determined by counting all remaining data lines after the header. Results are printed on server console and sent to the connected telnet client. Function integrates seamlessly into the existing socket server flow, called after receiving the CSV filename from the client.
+### STAGE 4 – Multi-Threaded Min–Max Normalization (COMPLETED)
 
----
+- Implemented normalize_column(void* arg) as a POSIX thread function.
+- One thread is created per numeric column.
+- Each thread:
+  - Scans raw_data[0..total_rows-1][col] to compute xmin[col] and xmax[col].
+  - Applies min–max normalization:
+    - x_norm = (x - xmin) / (xmax - xmin)
+  - If xmax == xmin (zero range), the range is set to 1.0 to avoid division by zero.
+  - Writes normalized values into normalized_data[row][col].
+- Threads only read their own column; no shared-write conflicts occur.
+- After all normalization threads join, the server prints min and max values to both console and client.
 
-### STAGE 3 – Column Type Detection (Schema Builder)
-- Automatic detection of numeric vs categorical attributes
-- Target column (price or equivalent) detection
+### STAGE 5 – Multi-Threaded Categorical Encoding (COMPLETED)
 
-Status: ✅ COMPLETED
+- load_csv_data() keeps all original categorical fields in raw_categorical[row][col] buffers.
+- Implemented encode_categorical_column(void* arg) as a thread function:
+  - For each categorical column:
+    - If the column is "furnishingstatus" and the dataset file name is Housing.csv,
+      special encoding is applied:
+        - furnished       → 2
+        - semi-furnished  → 1
+        - unfurnished     → 0
+    - Otherwise, generic yes/no encoding is used:
+        - "yes" → 1
+        - "no"  → 0
+        - any other / empty → 0
+- Each thread writes encoded results into encoded_data[row][col] for its own column.
+- No mutex is required because there is no concurrent write to the same memory region.
+- The server logs the start of each categorical encoding thread to the client,
+  and reports when all threads complete.
 
-**Technical Summary:**
-Implemented automatic schema detection system that analyzes CSV structure and column types. The analyze_csv() function reads the header row and first data row to determine column characteristics. Column type detection uses strtod() parsing on first data row values to classify columns as numeric or categorical. Target column detection performs case-insensitive substring matching on header names for "price", "target", or "label" keywords. All schema information is stored in global arrays: column_names[], column_types[], target_column_index, total_rows, and total_columns. The schema builder function is fully network-independent (no send() calls), with all client communication handled in main(). Results are printed to server console and sent to telnet client in the correct order.
+### STAGE 6 – Design Matrix Construction (COMPLETED)
 
----
+- Implemented build_design_matrix() to assemble the full feature matrix X_norm and target vector y_norm.
+- Feature ordering:
+  - Feature 0 is the bias term: X_norm[row][0] = 1.0 for all rows.
+  - Then all numeric features (except the target column) in original column order.
+  - Then all categorical features in original column order.
+- For each logical feature j:
+  - feature_names[j] holds the readable name.
+  - feature_to_column[j] maps back to the original CSV column index (or -1 for bias).
+- The target vector y_norm[row] is taken from normalized_data[row][target_column_index].
+- This stage guarantees a consistent mapping between:
+  - X_norm
+  - y_norm
+  - feature_names[]
+  - feature_to_column[]
 
-### STAGE 4 – Multi-Threaded Min–Max Normalization
-- One thread per numeric attribute
-- Compute xmin and xmax
-- Apply min–max normalization
-- Store normalization parameters
+### STAGE 7 – Multi-Threaded Regression Training (COMPLETED)
 
-Status: ✅ COMPLETED
+- Implemented compute_coefficient(void* arg) which operates per feature index j.
+- For each j:
+  - The thread computes row j of matrix A = XᵀX:
+    - A[j][k] = Σ X_norm[i][j] * X_norm[i][k] over all rows i.
+  - The same thread computes element B[j] of vector B = Xᵀy:
+    - B[j] = Σ X_norm[i][j] * y_norm[i].
+- After all coefficient threads join, the main thread solves the system:
+  - A * beta = B
+  - using Gaussian Elimination with partial pivoting.
+- The solution vector beta[] contains all regression coefficients, including bias.
+- The server prints the full normalized regression equation:
+  - price_norm = beta0 + beta1 * feature1_norm + ... + betaN * featureN_norm
 
-**Technical Summary:**
-Implemented multi-threaded min-max normalization system where each numeric column is processed by a dedicated thread. Each thread scans its assigned column over all rows to compute xmin (minimum value) and xmax (maximum value). The normalization formula x_norm = (x - xmin) / (xmax - xmin) is then applied to all values in that column, with special handling for zero-range columns (range = 1.0 to avoid division by zero). Normalized values are stored in normalized_data[][] matrix, while xmin[] and xmax[] arrays preserve the normalization parameters for later reverse-normalization. Threads operate independently on their assigned columns with no mutex required since each thread writes to a different column. This parallel processing architecture ensures efficient normalization of all numeric attributes simultaneously.
+### STAGE 8 – Interactive Prediction System (COMPLETED)
 
----
-
-### STAGE 5 – Multi-Threaded Categorical Encoding
-- yes/no → 1/0 encoding
-- Housing.csv special furnishingstatus encoding:
-  - furnished → 2
-  - semi-furnished → 1
-  - unfurnished → 0
-
-Status: ✅ COMPLETED
-
-**Technical Summary:**
-Implemented multi-threaded categorical encoding system where each categorical column is processed by a dedicated thread. The load_csv_data() function stores original categorical string values in raw_categorical[][][] buffer during initial CSV loading, eliminating redundant disk I/O. Each encoding thread reads directly from in-memory raw_categorical buffer instead of re-reading the CSV file. Encoding rules: yes/no values map to 1/0, and Housing.csv furnishingstatus column uses special mapping (furnished→2, semi-furnished→1, unfurnished→0). All encoded numeric values are stored in encoded_data[][] matrix. Threads operate independently on their assigned columns with no mutex required since each thread writes to a different column. This architecture ensures efficient in-memory preprocessing without redundant file operations.
-
----
-
-### STAGE 6 – Design Matrix Construction
-- Combine all normalized and encoded features into X_norm matrix
-- Build y_norm target vector
-
-Status: ✅ COMPLETED
-
-**Technical Summary:**
-Implemented design matrix construction that combines normalized numeric features and encoded categorical features into a unified feature matrix X_norm. The matrix is constructed column by column: Column 0 contains the bias term (1.0 for all rows), followed by all normalized numeric attributes excluding the target column (preserving original column order), then all encoded categorical attributes. The target vector y_norm is built by extracting normalized values from the target column index. The build_design_matrix() function iterates through all rows, systematically populating X_norm and y_norm using the existing normalized_data and encoded_data matrices. Original column order is preserved, and the target column is correctly excluded from X_norm while being used to construct y_norm. All operations are performed sequentially after normalization and encoding threads complete, ensuring data consistency.
-
----
-
-### STAGE 7 – Multi-Threaded Regression Training
-- Normal Equations method
-- One thread per regression coefficient βj
-- Compute XᵀX and Xᵀy
-- Solve using Gaussian Elimination
-
-Status: ✅ COMPLETED
-
-**Technical Summary:**
-Implemented multi-threaded regression training using Normal Equations method. The system computes XᵀX (matrix A) and Xᵀy (vector B) using one thread per regression coefficient βj. Each thread calculates its assigned row of A and its assigned element of B by performing dot products: A[j][k] = Σ(X_norm[i][j] * X_norm[i][k]) and B[j] = Σ(X_norm[i][j] * y_norm[i]) over all rows i. After all coefficient threads complete and join, the main thread solves the linear system (XᵀX)β = Xᵀy using Gaussian Elimination with partial pivoting. The solution vector β is stored in beta[] array. The system outputs the complete normalized regression equation showing β0 (bias term) and all βj coefficients with their corresponding feature names. Thread safety is ensured as each thread writes only to its own row of A and its own element of B, requiring no mutex synchronization.
-
----
-
-### STAGE 8 – Interactive Prediction System
-- Read raw user input
-- Normalize numeric values
-- Encode categorical values
-- Compute ŷ_norm
-- Reverse-normalize prediction to real scale
-
-Status: ✅ COMPLETED
-
-**Technical Summary:**
-Implemented interactive prediction system that accepts user input via telnet after training completes. The system prompts for each feature value sequentially, starting from feature index 1 (excluding bias term). For numeric features, raw values are read and normalized using the stored xmin[] and xmax[] parameters with the formula x_norm = (x - xmin) / (xmax - xmin). For categorical features, string input is read and encoded using the same rules as training: yes/no maps to 1/0, and Housing.csv furnishingstatus uses special mapping (furnished→2, semi-furnished→1, unfurnished→0). A temporary X_input_norm[] vector is constructed with bias term 1.0 at index 0 and normalized/encoded values at subsequent indices. The normalized prediction ŷ_norm is computed as the dot product Σ(beta[j] * X_input_norm[j]) over all features. Reverse normalization is applied to convert to real scale: ŷ_real = ŷ_norm * (xmax[target] - xmin[target]) + xmin[target]. Both normalized and real-scale predictions are sent to the client. The system uses existing beta[], xmin[], xmax[], feature_to_column[], and column_types[] arrays without recalculating training parameters.
+- After training, the server enters prediction mode for the current client.
+- For each feature j ≥ 1:
+  - The client is prompted for a raw value.
+  - For numeric features:
+    - Input is converted to double and min–max normalized using stored xmin/xmax.
+  - For categorical features:
+    - The same encoding rules as in training are applied (yes/no or furnishingstatus).
+- A temporary input vector X_input_norm[] is assembled:
+  - X_input_norm[0] = 1.0 (bias)
+  - X_input_norm[j] = normalized or encoded value
+- The normalized prediction is computed as:
+  - y_pred_norm = Σ beta[j] * X_input_norm[j]
+- Reverse normalization is applied to convert to original price scale:
+  - y_pred_real = y_pred_norm * (xmax[target] - xmin[target]) + xmin[target]
+- Both normalized and real-scale predictions are sent back to the client.
 
 --------------------------------------------------
 ## 8. BUILD & EXECUTION
 
-Compilation:
-```bash
-gcc assignment.c -o assignment -lpthread
+Compilation (example):
+
+- gcc assignment.c -o assignment -lpthread
 
 Execution:
-./assignment
 
-Client Connection:
-telnet localhost 60000
+- ./assignment
 
-##9. ACADEMIC INTEGRITY NOTE
+Client connection from the same machine:
+
+- telnet localhost 60000
+
+When prompted for CSV file name, enter:
+
+- Housing.csv
+
+(The server resolves it to the config/Housing.csv path internally.)
+
+--------------------------------------------------
+## 9. ACADEMIC INTEGRITY NOTE
 
 This project is developed manually in C.
-Online resources and AI-based tools are used strictly as:
 
-Syntax helpers
+External and AI-based tools are used only as:
+- Syntax helpers
+- Debugging assistants
+- Design discussion tools
 
-Debugging assistants
-
-Design discussion tools
-
-All final implementations are fully understood and owned by the student(s).
+All final implementations, design decisions and code are fully understood
+and owned by the student authors: Mert YILDIZ and Doğukan DAĞLI.
