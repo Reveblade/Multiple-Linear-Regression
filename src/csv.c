@@ -190,8 +190,22 @@ int analyze_csv(const char* filename) {
         if (header_cols[i] != NULL) {
             if (contains_keyword(header_cols[i], "price") ||
                 contains_keyword(header_cols[i], "target") ||
-                contains_keyword(header_cols[i], "label")) {
+                contains_keyword(header_cols[i], "label") ||
+                contains_keyword(header_cols[i], "performance") ||
+                contains_keyword(header_cols[i], "index") ||
+                contains_keyword(header_cols[i], "output") ||
+                contains_keyword(header_cols[i], "dependent")) {
                 target_column_index = i;
+            }
+        }
+    }
+
+    // Fallback: if no target found, use last numeric column
+    if (target_column_index == -1) {
+        for (int i = total_columns - 1; i >= 0; i--) {
+            if (column_types[i] == NUMERIC) {
+                target_column_index = i;
+                break;
             }
         }
     }

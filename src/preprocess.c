@@ -1,5 +1,10 @@
 #include "preprocess.h"
 #include "csv.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
+#include <math.h>
 #include <sys/socket.h>
 
 char column_names[MAX_COLUMNS][BUFFER_SIZE];
@@ -13,6 +18,7 @@ double xmax[MAX_COLUMNS];
 double normalized_data[MAX_SAMPLES][MAX_COLUMNS];
 double raw_data[MAX_SAMPLES][MAX_COLUMNS];
 double encoded_data[MAX_SAMPLES][MAX_COLUMNS];
+
 double X_norm[MAX_SAMPLES][MAX_FEATURES];
 double y_norm[MAX_SAMPLES];
 
@@ -33,15 +39,9 @@ int strcasecmp_simple(const char* s1, const char* s2) {
     while (*s1 && *s2) {
         char c1 = *s1;
         char c2 = *s2;
-        if (c1 >= 'A' && c1 <= 'Z') {
-            c1 = c1 - 'A' + 'a';
-        }
-        if (c2 >= 'A' && c2 <= 'Z') {
-            c2 = c2 - 'A' + 'a';
-        }
-        if (c1 != c2) {
-            return c1 - c2;
-        }
+        if (c1 >= 'A' && c1 <= 'Z') c1 += 32;
+        if (c2 >= 'A' && c2 <= 'Z') c2 += 32;
+        if (c1 != c2) return c1 - c2;
         s1++;
         s2++;
     }
@@ -49,139 +49,104 @@ int strcasecmp_simple(const char* s1, const char* s2) {
 }
 
 void* normalize_column(void* arg) {
-    int col_index = *(int*)arg;
+    int col = *(int*)arg;
 
-    double min_val = raw_data[0][col_index];
-    double max_val = raw_data[0][col_index];
+    double minv = raw_data[0][col];
+    double maxv = raw_data[0][col];
 
-    for (int row = 1; row < total_rows; row++) {
-        double val = raw_data[row][col_index];
-        if (val < min_val) {
-            min_val = val;
-        }
-        if (val > max_val) {
-            max_val = val;
-        }
+    for (int i = 1; i < total_rows; i++) {
+        if (raw_data[i][col] < minv) minv = raw_data[i][col];
+        if (raw_data[i][col] > maxv) maxv = raw_data[i][col];
     }
 
-    xmin[col_index] = min_val;
-    xmax[col_index] = max_val;
+    xmin[col] = minv;
+    xmax[col] = maxv;
 
-    double range = max_val - min_val;
-    if (range == 0.0) {
-        range = 1.0;
-    }
+    double range = maxv - minv;
+    if (range == 0.0) range = 1.0;
 
-    for (int row = 0; row < total_rows; row++) {
-        normalized_data[row][col_index] = (raw_data[row][col_index] - min_val) / range;
+    for (int i = 0; i < total_rows; i++) {
+        normalized_data[i][col] = (raw_data[i][col] - minv) / range;
     }
 
     return NULL;
 }
 
 void* encode_categorical_column(void* arg) {
-    int col_index = *(int*)arg;
+    int col = *(int*)arg;
 
-    int is_furnishingstatus = 0;
-
-    if (strcasecmp_simple(column_names[col_index], "furnishingstatus") == 0) {
-        const char* filename_base = strrchr(current_filename, '/');
-        if (filename_base == NULL) {
-            filename_base = current_filename;
-        } else {
-            filename_base++;
-        }
-        if (strcasecmp_simple(filename_base, "Housing.csv") == 0) {
-            is_furnishingstatus = 1;
-        }
+    int is_furnish = 0;
+    if (strcasecmp_simple(column_names[col], "furnishingstatus") == 0 &&
+        strstr(current_filename, "Housing.csv")) {
+        is_furnish = 1;
     }
 
-    char thread_msg[BUFFER_SIZE + 50];
-    snprintf(thread_msg, BUFFER_SIZE + 50, "[Thread C%d] %s: encoding started\n", col_index, column_names[col_index]);
-    printf("%s", thread_msg);
-    if (send(client_fd_global, thread_msg, strlen(thread_msg), 0) < 0) {
-        perror("send failed");
-    }
-
-    for (int row = 0; row < total_rows; row++) {
-        if (raw_categorical[row][col_index][0] != '\0') {
-            if (is_furnishingstatus) {
-                if (strcasecmp_simple(raw_categorical[row][col_index], "furnished") == 0) {
-                    encoded_data[row][col_index] = 2.0;
-                } else if (strcasecmp_simple(raw_categorical[row][col_index], "semi-furnished") == 0) {
-                    encoded_data[row][col_index] = 1.0;
-                } else if (strcasecmp_simple(raw_categorical[row][col_index], "unfurnished") == 0) {
-                    encoded_data[row][col_index] = 0.0;
-                } else {
-                    encoded_data[row][col_index] = 0.0;
-                }
-            } else {
-                if (strcasecmp_simple(raw_categorical[row][col_index], "yes") == 0) {
-                    encoded_data[row][col_index] = 1.0;
-                } else if (strcasecmp_simple(raw_categorical[row][col_index], "no") == 0) {
-                    encoded_data[row][col_index] = 0.0;
-                } else {
-                    encoded_data[row][col_index] = 0.0;
-                }
-            }
-        } else {
-            encoded_data[row][col_index] = 0.0;
+    for (int i = 0; i < total_rows; i++) {
+        if (raw_categorical[i][col][0] == '\0') {
+            encoded_data[i][col] = 0.0;
+        }
+        else if (is_furnish) {
+            if (strcasecmp_simple(raw_categorical[i][col], "furnished") == 0)
+                encoded_data[i][col] = 2.0;
+            else if (strcasecmp_simple(raw_categorical[i][col], "semi-furnished") == 0)
+                encoded_data[i][col] = 1.0;
+            else
+                encoded_data[i][col] = 0.0;
+        }
+        else {
+            if (strcasecmp_simple(raw_categorical[i][col], "yes") == 0)
+                encoded_data[i][col] = 1.0;
+            else
+                encoded_data[i][col] = 0.0;
         }
     }
-
     return NULL;
 }
 
 void build_design_matrix() {
     num_features = 0;
-    int feature_col = 0;
+    int fc = 0;
 
-    strcpy(feature_names[feature_col], "(bias)");
-    feature_to_column[feature_col] = -1;
-    feature_col++;
+    strcpy(feature_names[fc], "(bias)");
+    feature_to_column[fc] = -1;
+    fc++;
 
-    for (int orig_col = 0; orig_col < total_columns; orig_col++) {
-        if (column_types[orig_col] == NUMERIC && orig_col != target_column_index) {
-            strncpy(feature_names[feature_col], column_names[orig_col], BUFFER_SIZE - 1);
-            feature_names[feature_col][BUFFER_SIZE - 1] = '\0';
-            feature_to_column[feature_col] = orig_col;
-            feature_col++;
+    for (int c = 0; c < total_columns; c++) {
+        if (column_types[c] == NUMERIC && c != target_column_index) {
+            strcpy(feature_names[fc], column_names[c]);
+            feature_to_column[fc] = c;
+            fc++;
         }
     }
 
-    for (int orig_col = 0; orig_col < total_columns; orig_col++) {
-        if (column_types[orig_col] == CATEGORICAL) {
-            strncpy(feature_names[feature_col], column_names[orig_col], BUFFER_SIZE - 1);
-            feature_names[feature_col][BUFFER_SIZE - 1] = '\0';
-            feature_to_column[feature_col] = orig_col;
-            feature_col++;
+    for (int c = 0; c < total_columns; c++) {
+        if (column_types[c] == CATEGORICAL && c != target_column_index) {
+            strcpy(feature_names[fc], column_names[c]);
+            feature_to_column[fc] = c;
+            fc++;
         }
     }
 
-    num_features = feature_col;
+    num_features = fc;
 
-    for (int row = 0; row < total_rows; row++) {
-        feature_col = 0;
+    for (int i = 0; i < total_rows; i++) {
+        fc = 0;
+        X_norm[i][fc++] = 1.0;
 
-        X_norm[row][feature_col] = 1.0;
-        feature_col++;
-
-        for (int orig_col = 0; orig_col < total_columns; orig_col++) {
-            if (column_types[orig_col] == NUMERIC && orig_col != target_column_index) {
-                X_norm[row][feature_col] = normalized_data[row][orig_col];
-                feature_col++;
+        for (int c = 0; c < total_columns; c++) {
+            if (column_types[c] == NUMERIC && c != target_column_index) {
+                X_norm[i][fc++] = normalized_data[i][c];
             }
         }
 
-        for (int orig_col = 0; orig_col < total_columns; orig_col++) {
-            if (column_types[orig_col] == CATEGORICAL) {
-                X_norm[row][feature_col] = encoded_data[row][orig_col];
-                feature_col++;
+        for (int c = 0; c < total_columns; c++) {
+            if (column_types[c] == CATEGORICAL && c != target_column_index) {
+                X_norm[i][fc++] = encoded_data[i][c];
             }
         }
     }
 
-    for (int row = 0; row < total_rows; row++) {
-        y_norm[row] = normalized_data[row][target_column_index];
+    for (int i = 0; i < total_rows; i++) {
+        y_norm[i] = normalized_data[i][target_column_index];
     }
 }

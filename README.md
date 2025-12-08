@@ -63,7 +63,7 @@ Example compilation command (single binary named "assignment"):
 
 If the project is compiled module by module, a possible command is:
 
-- gcc src/main.c src/server.c src/csv.c src/preprocess.c src/regression.c src/prediction.c -o assignment -lpthread
+- gcc *.c -o assignment -lpthread
 
 The exact command may be adjusted depending on how the instructor expects the project to be built.
 
